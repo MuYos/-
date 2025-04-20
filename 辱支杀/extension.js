@@ -1,4 +1,4 @@
-game.import("extension",function(lib,game,ui,get,ai,_status){return {name:"辱支杀",content:function(config,pack){
+game.import("extension",function(lib,game,ui,get,ai,_status){return {name:"tmdwuyule",content:function(config,pack){
 },precontent:function(){
     // Ensure translations for the mark are set up early at game start
     if(!lib.skill._tmdwuyule_fandong_setup) { // Use a unique internal name
@@ -20,7 +20,7 @@ game.import("extension",function(lib,game,ui,get,ai,_status){return {name:"辱�
 },help:{},config:{},package:{
     character:{
         character:{
-            "腊主席":["male","qun",4,["tuzhi","wenge"],[]],
+            "腊主席":["male","shen",4,["tuzhi","wenge"],[]],
         },
         translate:{
             "腊主席":"腊主席",
@@ -153,20 +153,31 @@ game.import("extension",function(lib,game,ui,get,ai,_status){return {name:"辱�
                                             var source = _status.event.player; // The player choosing (event.current)
                                             var target = _status.event.skillOwner; // The skill owner (腊主席)
 
-                                            // Loyalist ('zhong') should generally not attack 'qun' unless attitude is very negative
-                                            if(source.identity == 'zhong'){
-                                                return get.attitude(source, target) < -3 ? 1 : -1;
+                                            // Modified AI logic - focus on team alignment rather than identity
+                                            // Don't attack teammates, prioritize attacking enemies
+                                            
+                                            // Check if they're on the same team
+                                            var sameTeam = false;
+                                            
+                                            // In identity mode
+                                            if(source.identity && target.identity) {
+                                                // Same identity = same team
+                                                if(source.identity == target.identity) sameTeam = true;
+                                                // Loyalist (zhong) and monarch (zhu) are teammates
+                                                if((source.identity == 'zhong' && target.identity == 'zhu') || 
+                                                   (source.identity == 'zhu' && target.identity == 'zhong')) {
+                                                    sameTeam = true;
+                                                }
                                             }
-                                            // Rebel ('fan') should attack 'qun'
-                                            if(source.identity == 'fan'){
-                                                return 9;
-                                            }
-                                            // Neutral ('nei') bases decision on standard effect calculation
-                                            if(source.identity == 'nei'){
-                                                return get.effect(target, {name:'sha'}, source, source);
-                                            }
-                                            // Default for other identities or if logic fails
-                                            return get.attitude(source, target) < 0 ? 1 : -1;
+                                            
+                                            // Check general attitude as a fallback
+                                            var attitude = get.attitude(source, target);
+                                            
+                                            // Don't attack teammates
+                                            if(sameTeam || attitude > 0) return -1;
+                                            
+                                            // Prioritize attacking enemies
+                                            return 8;
                                         },
                                         ai2: function(target){
                                             return 1; // Only one possible target
@@ -205,18 +216,18 @@ game.import("extension",function(lib,game,ui,get,ai,_status){return {name:"辱�
                 },
                 content:function(){
                     'step 0'
-                    // Lose maxHp first
-                    player.loseMaxHp();
+                    // 添加技能音频触发
+                    player.logSkill('wenge');
                     
                     // Get all players without 反动 mark (using namespaced name)
                     var potentialTargets = game.filterPlayer(function(current){
                         return current != player && !current.hasMark('tmdwuyule_fandong');
                     }).sortBySeat(player);
                     
-                    // Limit to at most X targets, where X is player's health value
-                    var maxTargets = player.hp;
+                    // Limit to at most X targets, where X is player's maximum HP (changed from HP)
+                    var maxTargets = player.maxHp;
                     
-                    // Let player choose which targets to affect, up to their hp value
+                    // Let player choose which targets to affect, up to their max hp value
                     if(potentialTargets.length > maxTargets) {
                         player.chooseTarget('【文革】：选择至多' + maxTargets + '名角色', 
                             [1, maxTargets], function(card, player, target){
@@ -244,6 +255,10 @@ game.import("extension",function(lib,game,ui,get,ai,_status){return {name:"辱�
                     }
                     
                     'step 2'
+                    // Reduce max HP AFTER target selection
+                    player.loseMaxHp();
+                    
+                    'step 3'
                     // If no more players to process, end the skill
                     if(event.list.length == 0) {
                         event.finish();
@@ -267,41 +282,49 @@ game.import("extension",function(lib,game,ui,get,ai,_status){return {name:"辱�
                         var player = _status.event.player; // Current player making choice
                         var skillOwner = _status.event.getParent().player; // Player who used 文革
                         
-                        // If current player is rebel, prefer gaining mark
-                        if(player.identity === 'fan') return '获得一枚"反动"标记';
-                        
-                        // If current player is loyalist, prefer using 杀 on rebels
-                        if(player.identity === 'zhong' && choices.length > 1){
-                            var targets = game.filterPlayer(function(target){
-                                // Check namespaced mark
-                                return target.hasMark('tmdwuyule_fandong') && 
-                                       target.identity === 'fan';
+                        // Modified AI logic - focus on whether there are enemy marked targets
+                        if(choices.length > 1) { // Can choose to use SHA
+                            // Check for marked enemies to attack
+                            var markedEnemies = game.filterPlayer(function(target){
+                                // Has mark and is an enemy
+                                if(!target.hasMark('tmdwuyule_fandong')) return false;
+                                
+                                // Check if they're enemies - prefer attitude check
+                                var attitude = get.attitude(player, target);
+                                if(attitude < 0) return true;
+                                
+                                // Identity-based check as a backup
+                                if(player.identity && target.identity) {
+                                    // Different identities and not zhu/zhong combo
+                                    if(player.identity != target.identity) {
+                                        if(!((player.identity == 'zhong' && target.identity == 'zhu') || 
+                                             (player.identity == 'zhu' && target.identity == 'zhong'))) {
+                                            return true;
+                                        }
+                                    }
+                                }
+                                
+                                return false;
                             });
-                            if(targets.length > 0) return '对一名有"反动"标记的角色使用一张【杀】';
+                            
+                            // If we found marked enemies, prioritize attacking them
+                            if(markedEnemies.length > 0 && player.countCards('h', 'sha') > 0) {
+                                return '对一名有"反动"标记的角色使用一张【杀】';
+                            }
                         }
                         
-                        // Neutral players decide based on benefit
-                        if(player.identity === 'nei' && choices.length > 1){
-                            var targets = game.filterPlayer(function(target){
-                                // Check namespaced mark
-                                return target.hasMark('tmdwuyule_fandong') && 
-                                       get.effect(target, {name:'sha'}, player, player) > 0;
-                            });
-                            if(targets.length > 0) return '对一名有"反动"标记的角色使用一张【杀】';
-                        }
-                        
-                        // Default choice
+                        // Default to taking the mark
                         return '获得一枚"反动"标记';
                     });
                     
-                    'step 3'
+                    'step 4'
                     // Handle player's choice
                     if(result.control === '获得一枚"反动"标记'){
                         // Add namespaced mark
                         event.current.addMark('tmdwuyule_fandong', 1);
                         game.log(event.current, '选择获得一枚', '#g"反动"标记');
                         // Process next player
-                        event.goto(2);
+                        event.goto(3);
                     }
                     else{
                         // Choose target for 杀 without distance limitation (check namespaced mark)
@@ -310,17 +333,20 @@ game.import("extension",function(lib,game,ui,get,ai,_status){return {name:"辱�
                         }).set('ai', function(target){
                             var player = _status.event.player;
                             
-                            // Prioritize based on identity
-                            if(player.identity === 'zhong' && target.identity === 'fan') return 10;
-                            if(player.identity === 'fan' && target.identity === 'zhong') return -10;
+                            // Modified AI logic - prioritize enemies based on general attitude, not just identity
+                            var attitude = get.attitude(player, target);
                             
-                            // Default targeting logic
-                            return get.effect(target, {name:'sha'}, player, player) * 
-                                   (get.attitude(player, target) < 0 ? 2 : 1);
+                            // Strong priority for attacking enemies 
+                            if(attitude < 0) return -attitude * 2;
+                            
+                            // Slight penalty for targeting allies
+                            if(attitude > 0) return -2;
+                            
+                            return 0; // Neutral target
                         });
                     }
                     
-                    'step 4'
+                    'step 5'
                     // If chose to use 杀 and selected a target, use 杀 without distance limitation
                     if(result.bool && result.targets && result.targets.length){
                         var card = {name:'sha', isCard:true};
@@ -332,7 +358,7 @@ game.import("extension",function(lib,game,ui,get,ai,_status){return {name:"辱�
                         game.log(event.current, '未选择目标，改为获得一枚', '#g"反动"标记');
                     }
                     // Process next player
-                    event.goto(2);
+                    event.goto(3);
                 },
                 ai:{
                     order:4,
@@ -380,13 +406,13 @@ game.import("extension",function(lib,game,ui,get,ai,_status){return {name:"辱�
             tuzhi:"屠支",
             "tuzhi_info":"游戏开始时，你令一名角色获得1枚\"反动\"标记。你对有\"反动\"标记的角色造成的伤害+1。每当有\"反动\"标记的角色受到1点伤害或失去1点体力时，你摸1张牌。每名角色的回合结束时，若该角色有\"反动\"标记，其可以对你使用一张【杀】（无距离限制）。",
             wenge:"文革",
-            "wenge_info":"出牌阶段限一次，你可以减1点体力上限，然后选择至多X名角色（X为你的体力值）未持有\"反动\"标记的角色令其选择：1.获得1枚\"反动\"标记；2.或对任意一名已有\"反动\"标记的角色使用一张【杀】（无距离限制）（若其无法如此做或放弃，则视为选择1）。",
+            "wenge_info":"出牌阶段限一次，你可以选择至多X名（X为你的体力上限）未持有\"反动\"标记的角色，然后减1点体力上限，令这些角色依次选择：1.获得1枚\"反动\"标记；2.或对任意一名已有\"反动\"标记的角色使用一张【杀】（无距离限制）（若其无法如此做或放弃，则视为选择1）。",
             "tmdwuyule_fandong":"反动",
             "tmdwuyule_fandong_mark":"反动",
         },
     },
     intro:"",
-    author:"腊个男人",
+    author:"无名玩家",
     diskURL:"",
     forumURL:"",
     version:"1.0",
