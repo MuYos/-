@@ -1,4 +1,4 @@
-game.import("extension",function(lib,game,ui,get,ai,_status){return {name:"tmdwuyule",content:function(config,pack){
+game.import("extension",function(lib,game,ui,get,ai,_status){return {name:"辱支杀",content:function(config,pack){
 },precontent:function(){
     // Ensure translations for the mark are set up early at game start
     if(!lib.skill._tmdwuyule_fandong_setup) { // Use a unique internal name
